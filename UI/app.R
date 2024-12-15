@@ -9,9 +9,7 @@ library(rmarkdown)
 library(pagedown)
 
 
-# Aumentar el límite de tamaño del archivo
-options(shiny.maxRequestSize = 30 * 1024^2)  # Hasta 30 MB
-
+options(shiny.maxRequestSize = 30 * 1024^2) 
 # Interfaz de Usuario
 ui <- navbarPage(
   title = div(
