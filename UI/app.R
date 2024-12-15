@@ -1,9 +1,13 @@
+
 library(shiny)
 library(isotree)
 library(ggplot2)
 library(janitor)
 library(DT)
 library(plotly)
+library(rmarkdown)
+library(pagedown)
+
 
 # Aumentar el límite de tamaño del archivo
 options(shiny.maxRequestSize = 30 * 1024^2)  # Hasta 30 MB
@@ -64,7 +68,8 @@ ui <- navbarPage(
       titlePanel("Visualización de Anomalías"),
       sidebarLayout(
         sidebarPanel(
-          h4("Gráfico"),
+          h4("Seleccione las Variables para el Gráfico"),
+          uiOutput("variable_selector"),
           p("Visualización interactiva de las anomalías detectadas.")
         ),
         mainPanel(
@@ -102,7 +107,8 @@ ui <- navbarPage(
         sidebarPanel(
           h4("Información"),
           p("Esta tabla lista todos los datos que fueron detectados como anómalos, junto con todas sus columnas."),
-          p("Además, calcula las medias globales y sin los datos anómalos.")
+          p("Además, permite descargar los datos anómalos en un archivo PDF."),
+          downloadButton("download_pdf", "Descargar Datos Anómalos (PDF)")
         ),
         mainPanel(
           DT::dataTableOutput("anomalies_table"),
@@ -162,9 +168,9 @@ server <- function(input, output, session) {
     DT::datatable(
       dataset(),
       options = list(
-        pageLength = 5,  # Número de filas por página
-        lengthMenu = c(5, 10, 15),  # Opciones para cambiar filas por página
-        scrollX = TRUE   # Habilitar desplazamiento horizontal
+        pageLength = 5,
+        lengthMenu = c(5, 10, 15),
+        scrollX = TRUE
       )
     )
   })
@@ -180,16 +186,16 @@ server <- function(input, output, session) {
   observeEvent(input$train, {
     req(dataset(), input$columns)
     data_for_training <- dataset()[, input$columns, drop = FALSE]
-    model(isolation.forest(data_for_training, ntrees = 100))
+    model(isolation.forest(data_for_training, ntrees = 300))
     selected_columns(input$columns)
     
     # Calcular puntuaciones de anomalías
     anomaly_scores <- predict(model(), data_for_training, type = "score")
-    data_with_scores <- dataset()  # Incluye todas las columnas originales
+    data_with_scores <- dataset()
     data_with_scores$Anomaly_Score <- anomaly_scores
-    threshold <- input$threshold  # Obtener el umbral del input
+    threshold <- input$threshold
     data_with_scores$Anomaly <- ifelse(anomaly_scores > threshold, "Sí", "No")
-    dataset_with_scores(data_with_scores)  # Guardar dataset con puntuaciones
+    dataset_with_scores(data_with_scores)
   })
   
   # Mostrar información del modelo
@@ -199,34 +205,42 @@ server <- function(input, output, session) {
           "\nUmbral de Anomalía:", input$threshold)
   })
   
-  # Ventana 3: Visualización de outliers
-  output$outlier_plot <- renderPlotly({
+  # Ventana 3: Selección de variables y visualización
+  output$variable_selector <- renderUI({
     req(dataset_with_scores())
+    selectInput("variables", "Selecciona las Variables (Máx. 3)", 
+                choices = names(dataset_with_scores()), 
+                multiple = TRUE, 
+                selected = head(names(dataset_with_scores()), 3))
+  })
+  
+  output$outlier_plot <- renderPlotly({
+    req(input$variables, length(input$variables) > 1)
     data_with_scores <- dataset_with_scores()
+    variables <- input$variables
     
-    if (length(selected_columns()) >= 3) {
+    if (length(variables) == 3) {
       plot_ly(
         data = data_with_scores,
-        x = data_with_scores[[1]],
-        y = data_with_scores[[2]],
-        z = data_with_scores[[3]],
-        color = data_with_scores$Anomaly,
+        x = ~get(variables[1]),
+        y = ~get(variables[2]),
+        z = ~get(variables[3]),
+        color = ~Anomaly,
         colors = c("blue", "red"),
         type = "scatter3d",
         mode = "markers"
       )
-    } else if (length(selected_columns()) == 2) {
-      gg <- ggplot(data_with_scores, aes(x = data_with_scores[[1]], y = data_with_scores[[2]], color = Anomaly)) +
+    } else if (length(variables) == 2) {
+      gg <- ggplot(data_with_scores, aes_string(x = variables[1], y = variables[2], color = "Anomaly")) +
         geom_point(size = 3) +
         scale_color_manual(values = c("No" = "blue", "Sí" = "red")) +
         labs(title = "Visualización 2D de Anomalías") +
         theme_minimal()
       ggplotly(gg)
     } else {
-      plotly_empty() %>% layout(title = "Seleccione al menos dos columnas para visualizar.")
+      plotly_empty() %>% layout(title = "Seleccione al menos 2 variables para graficar.")
     }
   })
-  
   # Ventana 4: Formulario dinámico para predicción
   output$dynamic_form <- renderUI({
     req(selected_columns())
@@ -252,20 +266,42 @@ server <- function(input, output, session) {
     output$anomaly_result <- renderText({ result })
   })
   
-  # Ventana 5: Mostrar datos anómalos y calcular medias
+  # Ventana 5: Descargar datos anómalos en PDF
   output$anomalies_table <- DT::renderDataTable({
     req(dataset_with_scores())
-    data_with_scores <- dataset_with_scores()
-    anomalies <- data_with_scores[data_with_scores$Anomaly == "Sí", ]  # Mostrar todas las columnas
-    DT::datatable(
-      anomalies,
-      options = list(
-        pageLength = 5,
-        scrollX = TRUE
-      )
-    )
+    anomalies <- dataset_with_scores()[dataset_with_scores()$Anomaly == "Sí", ]
+    DT::datatable(anomalies, options = list(pageLength = 5, scrollX = TRUE))
   })
   
+  output$download_pdf <- downloadHandler(
+    filename = function() {
+      paste("reporte_anomalias", Sys.Date(), ".pdf", sep = "")
+    },
+    content = function(file) {
+      req(dataset_with_scores())
+      anomalies <- dataset_with_scores()[dataset_with_scores()$Anomaly == "Sí", ]
+      
+      # Verificar si hay datos anómalos
+      print("Contenido de anomalies:")
+      print(anomalies)
+      
+      if (nrow(anomalies) == 0) {
+        stop("No hay datos anómalos para generar el informe.")
+      }
+      
+      # Renderizar el R Markdown
+      temp_html <- tempfile(fileext = ".html")
+      rmarkdown::render(
+        "anomalies_report.Rmd",
+        output_file = temp_html,
+        params = list(data = anomalies),
+        envir = new.env(parent = globalenv())
+      )
+      
+      # Convertir HTML a PDF
+      pagedown::chrome_print(input = temp_html, output = file)
+    }
+  )
   output$mean_calculations <- renderPrint({
     req(dataset_with_scores())
     data_with_scores <- dataset_with_scores()

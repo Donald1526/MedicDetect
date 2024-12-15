@@ -1,0 +1,53 @@
+---
+title: "Informe de Datos Anómalos"
+output: html_document
+params:
+  data: NULL
+---
+
+```{r setup, include=FALSE}
+# Configuración inicial para ocultar mensajes y warnings
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+```
+
+
+## **Verificación de los Datos**
+
+```{r check_data}
+if (is.null(params$data)) {
+  stop("No se recibieron datos anómalos. Verifique la aplicación Shiny.")
+} else if (nrow(params$data) == 0) {
+  cat("No se detectaron registros anómalos en los datos proporcionados.")
+} else {
+  cat("Se han detectado", nrow(params$data), "registros anómalos en los datos.")
+}
+```
+## **Vista Previa de los Datos Anómalos**
+
+```{r anomalies_table}
+if (!is.null(params$data) && nrow(params$data) > 0) {
+  library(knitr)
+  library(kableExtra)
+  
+  kable(head(params$data, 10), caption = "Primeros 10 registros anómalos") %>%
+    kable_styling(full_width = TRUE, bootstrap_options = c("striped", "hover", "condensed"))
+} else {
+  cat("No hay datos anómalos para mostrar en la tabla.")
+}
+```
+## **Visualización de los Datos**
+
+```{r anomalies_plot}
+if (!is.null(params$data) && nrow(params$data) > 0 && ncol(params$data) >= 2) {
+  library(ggplot2)
+  
+  ggplot(params$data, aes_string(x = names(params$data)[1], y = names(params$data)[2])) +
+    geom_point(color = "red", size = 3) +
+    labs(title = "Gráfico de Dispersión de Datos Anómalos",
+         x = names(params$data)[1], y = names(params$data)[2]) +
+    theme_minimal()
+} else {
+  cat("No hay suficientes columnas para generar el gráfico de dispersión.")
+}
+```
