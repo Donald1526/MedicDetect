@@ -13,10 +13,32 @@ options(shiny.maxRequestSize = 30 * 1024^2)
 # Interfaz de Usuario
 ui <- navbarPage(
   title = div(
-    img(src = "logo.webp", height = "30px", style = "margin-right: 0px;"), # Agrega el logo al título
+    img(src = "logo.jpg", height = "30px", style = "margin-right: 0px;"), 
     "MedDetect"
   ),
-  
+  tags$head(
+    tags$style(HTML("
+      body {
+        background-image: url('logo.jpg');
+        background-size: 30%;  /* Ajustar imagen al tamaño de la ventana */
+        background-attachment: fixed;
+        background-position: center;
+        background-repeat: no-repeat;
+        opacity: 1.0; /* Opacidad del fondo */
+      }
+      .navbar {
+        background-color: rgba(255, 255, 255, 0.8) !important; /* Translucidez del navbar */
+      }
+      .well {
+        background-color: rgba(255, 255, 255, 0.8); /* Translucidez de paneles laterales */
+        border-radius: 10px;
+      }
+      .tab-pane {
+        background-color: rgba(255, 255, 255, 0.8); /* Translucidez del contenido de pestañas */
+        border-radius: 10px;
+      }
+    "))
+  ),
   # Ventana 1: Cargar Archivo
   tabPanel(
     "Cargar Archivo",
@@ -60,6 +82,7 @@ ui <- navbarPage(
   ),
   
   # Ventana 3: Visualización
+  
   tabPanel(
     "Visualización",
     fluidPage(
@@ -104,8 +127,8 @@ ui <- navbarPage(
       sidebarLayout(
         sidebarPanel(
           h4("Información"),
-          p("Esta tabla lista todos los datos que fueron detectados como anómalos, junto con todas sus columnas."),
-          p("Además, permite descargar los datos anómalos en un archivo PDF."),
+          p("En esta tabla se encuentran los pacientes cuyos datos son anomalos."),
+          p("Descarga sus datos."),
           downloadButton("download_pdf", "Descargar Datos Anómalos (PDF)")
         ),
         mainPanel(
@@ -147,20 +170,17 @@ server <- function(input, output, session) {
     }
   })
   
-  # Mostrar advertencias si las hay
   output$warning_message <- renderUI({
     if (!is.null(warning_message())) {
       div(style = "color: red;", warning_message())
     }
   })
   
-  # Mostrar información del archivo cargado
   output$file_info <- renderText({
     req(input$file)
     paste("Archivo cargado:", input$file$name)
   })
   
-  # Mostrar vista previa interactiva del dataset
   output$preview <- DT::renderDataTable({
     req(dataset())
     DT::datatable(
@@ -174,20 +194,19 @@ server <- function(input, output, session) {
   })
   
   # Ventana 2: Selector dinámico de columnas
+  
   output$column_selector <- renderUI({
     req(dataset())
     checkboxGroupInput("columns", "Selecciona las columnas para entrenar",
                        choices = colnames(dataset()))
   })
   
-  # Entrenar modelo
   observeEvent(input$train, {
     req(dataset(), input$columns)
     data_for_training <- dataset()[, input$columns, drop = FALSE]
     model(isolation.forest(data_for_training, ntrees = 300))
     selected_columns(input$columns)
     
-    # Calcular puntuaciones de anomalías
     anomaly_scores <- predict(model(), data_for_training, type = "score")
     data_with_scores <- dataset()
     data_with_scores$Anomaly_Score <- anomaly_scores
@@ -196,7 +215,6 @@ server <- function(input, output, session) {
     dataset_with_scores(data_with_scores)
   })
   
-  # Mostrar información del modelo
   output$model_info <- renderPrint({
     req(model())
     paste("Modelo entrenado con las columnas:", paste(selected_columns(), collapse = ", "),
@@ -204,6 +222,7 @@ server <- function(input, output, session) {
   })
   
   # Ventana 3: Selección de variables y visualización
+  
   output$variable_selector <- renderUI({
     req(dataset_with_scores())
     selectInput("variables", "Selecciona las Variables (Máx. 3)", 
@@ -211,6 +230,7 @@ server <- function(input, output, session) {
                 multiple = TRUE, 
                 selected = head(names(dataset_with_scores()), 3))
   })
+  
   
   output$outlier_plot <- renderPlotly({
     req(input$variables, length(input$variables) > 1)
@@ -241,11 +261,11 @@ server <- function(input, output, session) {
   })
   # Ventana 4: Formulario dinámico para predicción
   output$dynamic_form <- renderUI({
-    req(selected_columns())
+    req(selected_columns())  # Requiere columnas seleccionadas
     lapply(selected_columns(), function(col) {
       numericInput(
         inputId = paste0("input_", col), 
-        label = col, 
+        label = paste("Ingrese valor para:", col), 
         value = NULL, 
         step = 0.01
       )
@@ -254,15 +274,31 @@ server <- function(input, output, session) {
   
   observeEvent(input$check_anomaly, {
     req(selected_columns(), model())
-    new_data <- as.data.frame(t(sapply(selected_columns(), function(col) {
+    
+    user_input <- sapply(selected_columns(), function(col) {
       input[[paste0("input_", col)]]
-    })))
+    })
+    
+    new_data <- as.data.frame(t(user_input))
     colnames(new_data) <- selected_columns()
     
+    print("Valores ingresados en el formulario:")
+    print(new_data)
+    
     anomaly_score <- predict(model(), new_data, type = "score")
-    result <- ifelse(anomaly_score > input$threshold, "Es una anomalía", "Es normal")
-    output$anomaly_result <- renderText({ result })
+    threshold <- input$threshold  # Umbral configurado por el usuario
+    
+    print(paste("Puntaje de Anomalía:", anomaly_score))
+    print(paste("Umbral:", threshold))
+    
+    result <- ifelse(anomaly_score > threshold, "¡Es una anomalía!", "Es normal")
+    
+    output$anomaly_result <- renderText({
+      paste("Resultado:", result, "\nPuntaje de Anomalía:", round(anomaly_score, 4))
+    })
   })
+  
+  
   
   # Ventana 5: Descargar datos anómalos en PDF
   output$anomalies_table <- DT::renderDataTable({
@@ -279,7 +315,6 @@ server <- function(input, output, session) {
       req(dataset_with_scores())
       anomalies <- dataset_with_scores()[dataset_with_scores()$Anomaly == "Sí", ]
       
-      # Verificar si hay datos anómalos
       print("Contenido de anomalies:")
       print(anomalies)
       
@@ -287,7 +322,6 @@ server <- function(input, output, session) {
         stop("No hay datos anómalos para generar el informe.")
       }
       
-      # Renderizar el R Markdown
       temp_html <- tempfile(fileext = ".html")
       rmarkdown::render(
         "anomalies_report.Rmd",
@@ -296,7 +330,6 @@ server <- function(input, output, session) {
         envir = new.env(parent = globalenv())
       )
       
-      # Convertir HTML a PDF
       pagedown::chrome_print(input = temp_html, output = file)
     }
   )
